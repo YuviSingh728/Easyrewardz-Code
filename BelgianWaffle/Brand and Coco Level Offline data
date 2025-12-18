@@ -65,6 +65,658 @@ AND deliverymode='offline'
 AND modifiedstorecode LIKE 'C%'
 GROUP BY 1;
  
+####################################City Wise H1 data####################################
+######################## Bengaluru  Overall – Offline Data  #########################################
+ 
+CREATE TABLE dummy.StoreData(
+City VARCHAR(100),StoreName VARCHAR(200),StoreCode VARCHAR(50));
+
+LOAD DATA LOCAL INFILE  "D:\\OneDrive - EasyRewardz Software Services Private Limited\\Umesh\\BellgianWaffels\\Citywisestore.csv"
+INTO TABLE dummy.StoreData
+CHARACTER SET 'latin1'
+FIELDS ESCAPED BY '\\'
+TERMINATED BY ','
+OPTIONALLY ENCLOSED BY '"'
+LINES TERMINATED BY '\r\n'
+IGNORE 1 LINES;
+
+  
+SELECT*FROM dummy.StoreData;
+ 
+ 
+ALTER TABLE dummy.StoreData ADD INDEX storecode(storecode);
+ALTER TABLE dummy.StoreData ADD INDEX city(city);
+ 
+
+
+WITH MOM_NONLoyalty AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period,
+    SUM(itemnetamount) AS Nonloyalty_Sales,COUNT(DISTINCT uniquebillno) AS Nonloyalty_Bills#,SUM(itemqty) AS Nonloyalty_Qty
+    FROM belgianwaffles.sku_report_nonloyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30')) 
+       AND deliverymode='offline' AND city='Bengaluru' AND b.storecode LIKE '%C%'
+    GROUP BY 1),
+    
+    LOYALTY AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24'  END AS Time_Period,
+    ROUND(SUM(itemnetamount),0) AS Loyalty_Sales,
+    COUNT(DISTINCT uniquebillno) AS Loyalty_Bills,
+    COUNT(DISTINCT txnmappedmobile) AS Transacting_Customers,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN txnmappedmobile END) AS Repeaters,
+    ROUND(SUM(CASE WHEN frequencycount > 1 THEN itemnetamount END),0) AS Repeat_Sales,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN uniquebillno END) AS Repeat_Bills,
+    COUNT(DISTINCT txnmappedmobile, modifiedTxndate) AS Visits,
+    COUNT(DISTINCT modifiedstorecode) AS Stores
+    FROM belgianwaffles.sku_report_loyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='Bengaluru' AND b.storecode LIKE '%C%'
+    GROUP BY 1)
+SELECT a.Time_Period,b.Stores,b.Transacting_Customers,b.Repeaters,b.Loyalty_Sales,a.Nonloyalty_Sales,b.Repeat_Sales,
+b.Loyalty_Bills,a.Nonloyalty_Bills,b.Repeat_Bills,Visits
+FROM MOM_NONLoyalty a
+LEFT JOIN LOYALTY b 
+ON a.Time_Period = b.Time_Period;#4m
+ 
+ 
+-- One Timer KPI
+WITH QOQ_KPI AS 
+(SELECT txnmappedmobile,CASE
+                WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period, 
+SUM(itemnetamount)sales,COUNT(DISTINCT uniquebillno)Bills,
+MIN(frequencycount)min_freq,MAX(frequencycount)max_freq 
+FROM belgianwaffles.sku_report_loyalty a
+JOIN dummy.StoreData b
+ON a.modifiedstorecode=b.storecode
+WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='Bengaluru' AND b.storecode LIKE '%C%'
+GROUP BY 1,2),
+
+QOQ_KPI_v2 AS (
+SELECT * FROM QOQ_KPI
+)
+SELECT Time_Period, 
+COUNT(DISTINCT CASE WHEN  max_freq = 1 THEN txnmappedmobile END)'One Timer',
+SUM(CASE WHEN  max_freq = 1 THEN sales END)'OneTimer Sales',
+SUM(CASE WHEN  max_freq = 1 THEN bills END)'OneTimer Bills'
+FROM QOQ_KPI_v2 
+GROUP BY Time_Period;#1Min
+
+-- Enrolments 
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' 
+            END AS Time_period,COUNT(DISTINCT mobile)Enrolments,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode 
+WHERE ((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='Bengaluru'
+GROUP BY 1;
+ 
+ 
+-- Enrolments storetype
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_period,
+       -- CASE WHEN enrolledstorecode LIKE 'C%' THEN 'COCO'
+--             WHEN (enrolledstorecode LIKE 'F%' OR enrolledstorecode LIKE 'P/%') THEN 'FOFO' END AS StoreTag,
+            COUNT(DISTINCT mobile)Enrolments ,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode
+WHERE((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+-- AND (enrolledstorecode LIKE 'C%' OR (enrolledstorecode LIKE 'F/%' OR enrolledstorecode LIKE 'P/%'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='Bengaluru'
+GROUP BY 1;
+
+
+######################## Pune  Overall – Offline Data  #########################################
+
+
+WITH MOM_NONLoyalty AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period,
+    SUM(itemnetamount) AS Nonloyalty_Sales,COUNT(DISTINCT uniquebillno) AS Nonloyalty_Bills#,SUM(itemqty) AS Nonloyalty_Qty
+    FROM belgianwaffles.sku_report_nonloyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30')) 
+       AND deliverymode='offline' AND city='pune' AND b.storecode LIKE '%C%'
+    GROUP BY 1),
+    
+    LOYALTY AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24'  END AS Time_Period,
+    ROUND(SUM(itemnetamount),0) AS Loyalty_Sales,
+    COUNT(DISTINCT uniquebillno) AS Loyalty_Bills,
+    COUNT(DISTINCT txnmappedmobile) AS Transacting_Customers,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN txnmappedmobile END) AS Repeaters,
+    ROUND(SUM(CASE WHEN frequencycount > 1 THEN itemnetamount END),0) AS Repeat_Sales,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN uniquebillno END) AS Repeat_Bills,
+    COUNT(DISTINCT txnmappedmobile, modifiedTxndate) AS Visits,
+    COUNT(DISTINCT modifiedstorecode) AS Stores
+    FROM belgianwaffles.sku_report_loyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='pune' AND b.storecode LIKE '%C%'
+    GROUP BY 1)
+SELECT a.Time_Period,b.Stores,b.Transacting_Customers,b.Repeaters,b.Loyalty_Sales,a.Nonloyalty_Sales,b.Repeat_Sales,
+b.Loyalty_Bills,a.Nonloyalty_Bills,b.Repeat_Bills,Visits
+FROM MOM_NONLoyalty a
+LEFT JOIN LOYALTY b 
+ON a.Time_Period = b.Time_Period;#4m
+ 
+ 
+-- One Timer KPI
+WITH QOQ_KPI AS 
+(SELECT txnmappedmobile,CASE
+                WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period, 
+SUM(itemnetamount)sales,COUNT(DISTINCT uniquebillno)Bills,
+MIN(frequencycount)min_freq,MAX(frequencycount)max_freq 
+FROM belgianwaffles.sku_report_loyalty a
+JOIN dummy.StoreData b
+ON a.modifiedstorecode=b.storecode
+WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='pune' AND b.storecode LIKE '%C%'
+GROUP BY 1,2),
+
+QOQ_KPI_v2 AS (
+SELECT * FROM QOQ_KPI
+)
+SELECT Time_Period, 
+COUNT(DISTINCT CASE WHEN  max_freq = 1 THEN txnmappedmobile END)'One Timer',
+SUM(CASE WHEN  max_freq = 1 THEN sales END)'OneTimer Sales',
+SUM(CASE WHEN  max_freq = 1 THEN bills END)'OneTimer Bills'
+FROM QOQ_KPI_v2 
+GROUP BY Time_Period;#1Min
+
+-- Enrolments 
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' 
+            END AS Time_period,COUNT(DISTINCT mobile)Enrolments,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode 
+WHERE ((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='pune'
+GROUP BY 1;
+ 
+ 
+-- Enrolments storetype
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_period,
+       -- CASE WHEN enrolledstorecode LIKE 'C%' THEN 'COCO'
+--             WHEN (enrolledstorecode LIKE 'F%' OR enrolledstorecode LIKE 'P/%') THEN 'FOFO' END AS StoreTag,
+            COUNT(DISTINCT mobile)Enrolments ,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode
+WHERE((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+-- AND (enrolledstorecode LIKE 'C%' OR (enrolledstorecode LIKE 'F/%' OR enrolledstorecode LIKE 'P/%'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='pune'
+GROUP BY 1;
+
+
+######################## Chennai  Overall – Offline Data  #########################################
+
+
+WITH MOM_NONLoyalty AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period,
+    SUM(itemnetamount) AS Nonloyalty_Sales,COUNT(DISTINCT uniquebillno) AS Nonloyalty_Bills#,SUM(itemqty) AS Nonloyalty_Qty
+    FROM belgianwaffles.sku_report_nonloyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30')) 
+       AND deliverymode='offline' AND city='Chennai' AND b.storecode LIKE '%C%'
+    GROUP BY 1),
+    
+    LOYALTY AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24'  END AS Time_Period,
+    ROUND(SUM(itemnetamount),0) AS Loyalty_Sales,
+    COUNT(DISTINCT uniquebillno) AS Loyalty_Bills,
+    COUNT(DISTINCT txnmappedmobile) AS Transacting_Customers,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN txnmappedmobile END) AS Repeaters,
+    ROUND(SUM(CASE WHEN frequencycount > 1 THEN itemnetamount END),0) AS Repeat_Sales,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN uniquebillno END) AS Repeat_Bills,
+    COUNT(DISTINCT txnmappedmobile, modifiedTxndate) AS Visits,
+    COUNT(DISTINCT modifiedstorecode) AS Stores
+    FROM belgianwaffles.sku_report_loyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='Chennai' AND b.storecode LIKE '%C%'
+    GROUP BY 1)
+SELECT a.Time_Period,b.Stores,b.Transacting_Customers,b.Repeaters,b.Loyalty_Sales,a.Nonloyalty_Sales,b.Repeat_Sales,
+b.Loyalty_Bills,a.Nonloyalty_Bills,b.Repeat_Bills,Visits
+FROM MOM_NONLoyalty a
+LEFT JOIN LOYALTY b 
+ON a.Time_Period = b.Time_Period;#4m
+ 
+ 
+-- One Timer KPI
+WITH QOQ_KPI AS 
+(SELECT txnmappedmobile,CASE
+                WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period, 
+SUM(itemnetamount)sales,COUNT(DISTINCT uniquebillno)Bills,
+MIN(frequencycount)min_freq,MAX(frequencycount)max_freq 
+FROM belgianwaffles.sku_report_loyalty a
+JOIN dummy.StoreData b
+ON a.modifiedstorecode=b.storecode
+WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='Chennai' AND b.storecode LIKE '%C%'
+GROUP BY 1,2),
+
+QOQ_KPI_v2 AS (
+SELECT * FROM QOQ_KPI
+)
+SELECT Time_Period, 
+COUNT(DISTINCT CASE WHEN  max_freq = 1 THEN txnmappedmobile END)'One Timer',
+SUM(CASE WHEN  max_freq = 1 THEN sales END)'OneTimer Sales',
+SUM(CASE WHEN  max_freq = 1 THEN bills END)'OneTimer Bills'
+FROM QOQ_KPI_v2 
+GROUP BY Time_Period;#1Min
+
+-- Enrolments 
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' 
+            END AS Time_period,COUNT(DISTINCT mobile)Enrolments,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode 
+WHERE ((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='Chennai'
+GROUP BY 1;
+ 
+ 
+-- Enrolments storetype
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_period,
+       -- CASE WHEN enrolledstorecode LIKE 'C%' THEN 'COCO'
+--             WHEN (enrolledstorecode LIKE 'F%' OR enrolledstorecode LIKE 'P/%') THEN 'FOFO' END AS StoreTag,
+            COUNT(DISTINCT mobile)Enrolments ,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode
+WHERE((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+-- AND (enrolledstorecode LIKE 'C%' OR (enrolledstorecode LIKE 'F/%' OR enrolledstorecode LIKE 'P/%'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='Chennai'
+GROUP BY 1;
+
+######################## Kolkata  Overall – Offline Data  #########################################
+
+
+WITH MOM_NONLoyalty AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period,
+    SUM(itemnetamount) AS Nonloyalty_Sales,COUNT(DISTINCT uniquebillno) AS Nonloyalty_Bills#,SUM(itemqty) AS Nonloyalty_Qty
+    FROM belgianwaffles.sku_report_nonloyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30')) 
+       AND deliverymode='offline' AND city='Kolkata' AND b.storecode LIKE '%C%'
+    GROUP BY 1),
+    
+    LOYALTY AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24'  END AS Time_Period,
+    ROUND(SUM(itemnetamount),0) AS Loyalty_Sales,
+    COUNT(DISTINCT uniquebillno) AS Loyalty_Bills,
+    COUNT(DISTINCT txnmappedmobile) AS Transacting_Customers,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN txnmappedmobile END) AS Repeaters,
+    ROUND(SUM(CASE WHEN frequencycount > 1 THEN itemnetamount END),0) AS Repeat_Sales,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN uniquebillno END) AS Repeat_Bills,
+    COUNT(DISTINCT txnmappedmobile, modifiedTxndate) AS Visits,
+    COUNT(DISTINCT modifiedstorecode) AS Stores
+    FROM belgianwaffles.sku_report_loyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='Kolkata' AND b.storecode LIKE '%C%'
+    GROUP BY 1)
+SELECT a.Time_Period,b.Stores,b.Transacting_Customers,b.Repeaters,b.Loyalty_Sales,a.Nonloyalty_Sales,b.Repeat_Sales,
+b.Loyalty_Bills,a.Nonloyalty_Bills,b.Repeat_Bills,Visits
+FROM MOM_NONLoyalty a
+LEFT JOIN LOYALTY b 
+ON a.Time_Period = b.Time_Period;#4m
+ 
+ 
+-- One Timer KPI
+WITH QOQ_KPI AS 
+(SELECT txnmappedmobile,CASE
+                WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period, 
+SUM(itemnetamount)sales,COUNT(DISTINCT uniquebillno)Bills,
+MIN(frequencycount)min_freq,MAX(frequencycount)max_freq 
+FROM belgianwaffles.sku_report_loyalty a
+JOIN dummy.StoreData b
+ON a.modifiedstorecode=b.storecode
+WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='Kolkata' AND b.storecode LIKE '%C%'
+GROUP BY 1,2),
+
+QOQ_KPI_v2 AS (
+SELECT * FROM QOQ_KPI
+)
+SELECT Time_Period, 
+COUNT(DISTINCT CASE WHEN  max_freq = 1 THEN txnmappedmobile END)'One Timer',
+SUM(CASE WHEN  max_freq = 1 THEN sales END)'OneTimer Sales',
+SUM(CASE WHEN  max_freq = 1 THEN bills END)'OneTimer Bills'
+FROM QOQ_KPI_v2 
+GROUP BY Time_Period;#1Min
+
+-- Enrolments 
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' 
+            END AS Time_period,COUNT(DISTINCT mobile)Enrolments,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode 
+WHERE ((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='Kolkata'
+GROUP BY 1;
+ 
+ 
+-- Enrolments storetype
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_period,
+       -- CASE WHEN enrolledstorecode LIKE 'C%' THEN 'COCO'
+--             WHEN (enrolledstorecode LIKE 'F%' OR enrolledstorecode LIKE 'P/%') THEN 'FOFO' END AS StoreTag,
+            COUNT(DISTINCT mobile)Enrolments ,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode
+WHERE((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+-- AND (enrolledstorecode LIKE 'C%' OR (enrolledstorecode LIKE 'F/%' OR enrolledstorecode LIKE 'P/%'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='Kolkata'
+GROUP BY 1;
+
+######################## NCR  Overall – Offline Data  #########################################
+
+
+WITH MOM_NONLoyalty AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period,
+    SUM(itemnetamount) AS Nonloyalty_Sales,COUNT(DISTINCT uniquebillno) AS Nonloyalty_Bills#,SUM(itemqty) AS Nonloyalty_Qty
+    FROM belgianwaffles.sku_report_nonloyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30')) 
+       AND deliverymode='offline' AND city='NCR' AND b.storecode LIKE '%C%'
+    GROUP BY 1),
+    
+    LOYALTY AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24'  END AS Time_Period,
+    ROUND(SUM(itemnetamount),0) AS Loyalty_Sales,
+    COUNT(DISTINCT uniquebillno) AS Loyalty_Bills,
+    COUNT(DISTINCT txnmappedmobile) AS Transacting_Customers,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN txnmappedmobile END) AS Repeaters,
+    ROUND(SUM(CASE WHEN frequencycount > 1 THEN itemnetamount END),0) AS Repeat_Sales,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN uniquebillno END) AS Repeat_Bills,
+    COUNT(DISTINCT txnmappedmobile, modifiedTxndate) AS Visits,
+    COUNT(DISTINCT modifiedstorecode) AS Stores
+    FROM belgianwaffles.sku_report_loyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='NCR' AND b.storecode LIKE '%C%'
+    GROUP BY 1)
+SELECT a.Time_Period,b.Stores,b.Transacting_Customers,b.Repeaters,b.Loyalty_Sales,a.Nonloyalty_Sales,b.Repeat_Sales,
+b.Loyalty_Bills,a.Nonloyalty_Bills,b.Repeat_Bills,Visits
+FROM MOM_NONLoyalty a
+LEFT JOIN LOYALTY b 
+ON a.Time_Period = b.Time_Period;#4m
+ 
+ 
+-- One Timer KPI
+WITH QOQ_KPI AS 
+(SELECT txnmappedmobile,CASE
+                WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period, 
+SUM(itemnetamount)sales,COUNT(DISTINCT uniquebillno)Bills,
+MIN(frequencycount)min_freq,MAX(frequencycount)max_freq 
+FROM belgianwaffles.sku_report_loyalty a
+JOIN dummy.StoreData b
+ON a.modifiedstorecode=b.storecode
+WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='NCR' AND b.storecode LIKE '%C%'
+GROUP BY 1,2),
+
+QOQ_KPI_v2 AS (
+SELECT * FROM QOQ_KPI
+)
+SELECT Time_Period, 
+COUNT(DISTINCT CASE WHEN  max_freq = 1 THEN txnmappedmobile END)'One Timer',
+SUM(CASE WHEN  max_freq = 1 THEN sales END)'OneTimer Sales',
+SUM(CASE WHEN  max_freq = 1 THEN bills END)'OneTimer Bills'
+FROM QOQ_KPI_v2 
+GROUP BY Time_Period;#1Min
+
+-- Enrolments 
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' 
+            END AS Time_period,COUNT(DISTINCT mobile)Enrolments,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode 
+WHERE ((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='NCR'
+GROUP BY 1;
+ 
+ 
+-- Enrolments storetype
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_period,
+       -- CASE WHEN enrolledstorecode LIKE 'C%' THEN 'COCO'
+--             WHEN (enrolledstorecode LIKE 'F%' OR enrolledstorecode LIKE 'P/%') THEN 'FOFO' END AS StoreTag,
+            COUNT(DISTINCT mobile)Enrolments ,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode
+WHERE((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+-- AND (enrolledstorecode LIKE 'C%' OR (enrolledstorecode LIKE 'F/%' OR enrolledstorecode LIKE 'P/%'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='NCR'
+GROUP BY 1;
+
+
+######################## MMR  Overall – Offline Data  #########################################
+
+
+WITH MOM_NONLoyalty AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period,
+    SUM(itemnetamount) AS Nonloyalty_Sales,COUNT(DISTINCT uniquebillno) AS Nonloyalty_Bills#,SUM(itemqty) AS Nonloyalty_Qty
+    FROM belgianwaffles.sku_report_nonloyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30')) 
+       AND deliverymode='offline' AND city='MMR' AND b.storecode LIKE '%C%'
+    GROUP BY 1),
+    
+    LOYALTY AS (
+    SELECT CASE WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24'  END AS Time_Period,
+    ROUND(SUM(itemnetamount),0) AS Loyalty_Sales,
+    COUNT(DISTINCT uniquebillno) AS Loyalty_Bills,
+    COUNT(DISTINCT txnmappedmobile) AS Transacting_Customers,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN txnmappedmobile END) AS Repeaters,
+    ROUND(SUM(CASE WHEN frequencycount > 1 THEN itemnetamount END),0) AS Repeat_Sales,
+    COUNT(DISTINCT CASE WHEN frequencycount > 1 THEN uniquebillno END) AS Repeat_Bills,
+    COUNT(DISTINCT txnmappedmobile, modifiedTxndate) AS Visits,
+    COUNT(DISTINCT modifiedstorecode) AS Stores
+    FROM belgianwaffles.sku_report_loyalty a
+    JOIN dummy.StoreData b
+    ON a.modifiedstorecode=b.storecode
+    WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='MMR' AND b.storecode LIKE '%C%'
+    GROUP BY 1)
+SELECT a.Time_Period,b.Stores,b.Transacting_Customers,b.Repeaters,b.Loyalty_Sales,a.Nonloyalty_Sales,b.Repeat_Sales,
+b.Loyalty_Bills,a.Nonloyalty_Bills,b.Repeat_Bills,Visits
+FROM MOM_NONLoyalty a
+LEFT JOIN LOYALTY b 
+ON a.Time_Period = b.Time_Period;#4m
+ 
+ 
+-- One Timer KPI
+WITH QOQ_KPI AS 
+(SELECT txnmappedmobile,CASE
+                WHEN modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+                WHEN modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+                WHEN modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_Period, 
+SUM(itemnetamount)sales,COUNT(DISTINCT uniquebillno)Bills,
+MIN(frequencycount)min_freq,MAX(frequencycount)max_freq 
+FROM belgianwaffles.sku_report_loyalty a
+JOIN dummy.StoreData b
+ON a.modifiedstorecode=b.storecode
+WHERE ((modifiedtxndate BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedtxndate BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedtxndate BETWEEN '2025-04-01' AND '2025-09-30'))  
+       AND deliverymode='offline' AND city='MMR' AND b.storecode LIKE '%C%'
+GROUP BY 1,2),
+
+QOQ_KPI_v2 AS (
+SELECT * FROM QOQ_KPI
+)
+SELECT Time_Period, 
+COUNT(DISTINCT CASE WHEN  max_freq = 1 THEN txnmappedmobile END)'One Timer',
+SUM(CASE WHEN  max_freq = 1 THEN sales END)'OneTimer Sales',
+SUM(CASE WHEN  max_freq = 1 THEN bills END)'OneTimer Bills'
+FROM QOQ_KPI_v2 
+GROUP BY Time_Period;#1Min
+
+-- Enrolments 
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' 
+            END AS Time_period,COUNT(DISTINCT mobile)Enrolments,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode 
+WHERE ((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='MMR'
+GROUP BY 1;
+ 
+ 
+-- Enrolments storetype
+SELECT CASE WHEN modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30' THEN 'Apr-Sept-25'
+            WHEN modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31' THEN 'Oct-24-Mar-25'
+            WHEN modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30' THEN 'Apr-Sept-24' END AS Time_period,
+       -- CASE WHEN enrolledstorecode LIKE 'C%' THEN 'COCO'
+--             WHEN (enrolledstorecode LIKE 'F%' OR enrolledstorecode LIKE 'P/%') THEN 'FOFO' END AS StoreTag,
+            COUNT(DISTINCT mobile)Enrolments ,COUNT(DISTINCT Enrolledstorecode)Enrolled_Stores
+FROM belgianwaffles.member_report a
+JOIN dummy.StoreData b
+ON a.enrolledstorecode=b.storecode
+WHERE((modifiedenrolledon BETWEEN '2024-04-01' AND '2024-09-30')OR
+       (modifiedenrolledon BETWEEN '2024-10-01' AND '2025-03-31')OR 
+       (modifiedenrolledon BETWEEN '2025-04-01' AND '2025-09-30'))
+-- AND (enrolledstorecode LIKE 'C%' OR (enrolledstorecode LIKE 'F/%' OR enrolledstorecode LIKE 'P/%'))
+AND enrolledstorecode NOT LIKE '%Demo%' AND city='MMR'
+GROUP BY 1;
+
+
+
+
+
+
+
+
+
+
+
 
 
 
